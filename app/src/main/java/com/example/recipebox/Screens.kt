@@ -38,14 +38,15 @@ fun LibraryScreen(
     var importDialog by remember { mutableStateOf(false) }
     var importText by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
+    var aboutDialog by remember { mutableStateOf(false) }
 
     val categories = remember(recipes) { recipes.flatMap { it.categories }.distinct().sorted() }
     val filtered = remember(recipes, query, selectedCategory) {
         val q = query.trim().lowercase()
         recipes.filter { r ->
             (selectedCategory == null || selectedCategory in r.categories) &&
-                (q.isBlank() || listOf(r.title, r.description, r.notes, r.sourceName,
-                    r.ingredients.joinToString(" ") { it.originalText },
+                (q.isBlank() || listOf(r.displayTitle(), r.title, r.description, r.notes, r.sourceName,
+                    r.visibleIngredients().joinToString(" ") { it.originalText },
                     r.categories.joinToString(" ")).any { it.lowercase().contains(q) })
         }
     }
@@ -61,6 +62,7 @@ fun LibraryScreen(
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text("Back up to cloud / Drive") }, leadingIcon = { Icon(Icons.Default.CloudUpload, null) }, onClick = { menu = false; onBackup() })
                             DropdownMenuItem(text = { Text("Restore backup") }, leadingIcon = { Icon(Icons.Default.CloudDownload, null) }, onClick = { menu = false; onRestore() })
+                            DropdownMenuItem(text = { Text("About") }, onClick = { menu = false; aboutDialog = true })
                         }
                     }
                 }
@@ -106,6 +108,13 @@ fun LibraryScreen(
         }
     }
 
+    if (aboutDialog) AlertDialog(
+        onDismissRequest = { aboutDialog = false },
+        title = { Text("About RecipeBox") },
+        text = { Text("Version ${BuildConfig.VERSION_NAME}") },
+        confirmButton = { TextButton(onClick = { aboutDialog = false }) { Text("OK") } }
+    )
+
     if (importDialog) AlertDialog(
         onDismissRequest = { importDialog = false },
         title = { Text("Import recipe link") },
@@ -136,7 +145,7 @@ private fun RecipeCard(recipe: Recipe, onClick: (Recipe) -> Unit) {
             }
             Column(Modifier.padding(14.dp).weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(recipe.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text(recipe.displayTitle(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                     if (recipe.isFavorite) Icon(Icons.Default.Favorite, null)
                 }
                 if (recipe.categories.isNotEmpty()) Text(recipe.categories.take(3).joinToString(" • "), style = MaterialTheme.typography.labelMedium)
@@ -185,13 +194,15 @@ fun ImportScreen(initialUrl: String, onBack: () -> Unit, onImported: (Recipe) ->
 @Composable
 fun DetailScreen(recipe: Recipe, onBack: () -> Unit, onEdit: () -> Unit, onUpdate: (Recipe) -> Unit, onDelete: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val ingredients = recipe.visibleIngredients()
     var targetServings by remember(recipe.id) { mutableStateOf(recipe.servings ?: 1.0) }
     val multiplier = if (recipe.servings != null && recipe.servings > 0) targetServings / recipe.servings else 1.0
     var deleteConfirm by remember { mutableStateOf(false) }
+    var expandedDescription by remember(recipe.id) { mutableStateOf(false) }
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text(recipe.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            title = { Text("Recipe", maxLines = 1) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
             actions = {
                 IconButton(onClick = { onUpdate(recipe.copy(isFavorite = !recipe.isFavorite)) }) { Icon(if (recipe.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite") }
@@ -205,11 +216,23 @@ fun DetailScreen(recipe: Recipe, onBack: () -> Unit, onEdit: () -> Unit, onUpdat
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 36.dp)) {
             if (recipe.imageUrl.startsWith("https://")) item {
-                AsyncImage(recipe.imageUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(240.dp))
+                AsyncImage(recipe.imageUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(160.dp))
             }
             item {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    if (recipe.description.isNotBlank()) Text(recipe.description)
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(recipe.displayTitle(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    if (recipe.description.isNotBlank()) {
+                        Text(
+                            recipe.description,
+                            maxLines = if (expandedDescription) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (recipe.description.length > 120) {
+                            TextButton(onClick = { expandedDescription = !expandedDescription }) {
+                                Text(if (expandedDescription) "Show less" else "Show more")
+                            }
+                        }
+                    }
                     if (recipe.categories.isNotEmpty()) Text(recipe.categories.joinToString(" • "), style = MaterialTheme.typography.labelLarge)
                     recipe.servings?.let {
                         Text("Portions", fontWeight = FontWeight.Bold)
@@ -220,17 +243,23 @@ fun DetailScreen(recipe: Recipe, onBack: () -> Unit, onEdit: () -> Unit, onUpdat
                             TextButton(onClick = { targetServings = recipe.servings }) { Text("Reset") }
                         }
                     }
-                    Text("Ingredients", style = MaterialTheme.typography.headlineSmall)
+                    if (ingredients.isNotEmpty()) Text("Ingredients", style = MaterialTheme.typography.headlineSmall)
                 }
             }
-            items(recipe.ingredients) { ing ->
+            items(ingredients) { ing ->
                 Row(Modifier.padding(horizontal = 18.dp, vertical = 5.dp)) { Text("☐  ${ing.scaled(multiplier)}") }
             }
-            item { Text("Instructions", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(18.dp)) }
+            if (ingredients.isEmpty()) item {
+                Text("Ingredients weren't found in this link. Add them with Edit.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
+            }
+            if (recipe.steps.isNotEmpty()) item { Text("Instructions", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) }
             itemsIndexed(recipe.steps) { index, step ->
                 Row(Modifier.padding(horizontal = 18.dp, vertical = 7.dp)) {
                     Text("${index + 1}.", fontWeight = FontWeight.Bold, modifier = Modifier.width(32.dp)); Text(step)
                 }
+            }
+            if (recipe.steps.isEmpty()) item {
+                Text("Cooking steps weren't found. Watch the video or add steps with Edit.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
             }
             if (recipe.notes.isNotBlank()) item {
                 Column(Modifier.padding(18.dp)) { Text("My notes", style = MaterialTheme.typography.headlineSmall); Spacer(Modifier.height(6.dp)); Text(recipe.notes) }
@@ -238,7 +267,7 @@ fun DetailScreen(recipe: Recipe, onBack: () -> Unit, onEdit: () -> Unit, onUpdat
             item {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (recipe.videoUrl.startsWith("http")) Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(recipe.videoUrl))) }) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Watch original video") }
-                    if (recipe.sourceUrl.startsWith("http")) OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(recipe.sourceUrl))) }) { Icon(Icons.Default.OpenInBrowser, null); Spacer(Modifier.width(8.dp)); Text("View original recipe") }
+                    if (recipe.sourceUrl.startsWith("http") && recipe.sourceUrl != recipe.videoUrl) OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(recipe.sourceUrl))) }) { Icon(Icons.Default.OpenInBrowser, null); Spacer(Modifier.width(8.dp)); Text("View original recipe") }
                     TextButton(onClick = { deleteConfirm = true }) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp)); Text("Delete recipe") }
                 }
             }
@@ -250,10 +279,10 @@ fun DetailScreen(recipe: Recipe, onBack: () -> Unit, onEdit: () -> Unit, onUpdat
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditRecipeScreen(existing: Recipe?, onBack: () -> Unit, onSave: (Recipe) -> Unit) {
-    var title by remember(existing?.id) { mutableStateOf(existing?.title.orEmpty()) }
+    var title by remember(existing?.id) { mutableStateOf(existing?.displayTitle().orEmpty()) }
     var description by remember(existing?.id) { mutableStateOf(existing?.description.orEmpty()) }
     var servings by remember(existing?.id) { mutableStateOf(existing?.servings?.let(FractionFormatter::format).orEmpty()) }
-    var ingredients by remember(existing?.id) { mutableStateOf(existing?.ingredients?.joinToString("\n") { it.originalText }.orEmpty()) }
+    var ingredients by remember(existing?.id) { mutableStateOf(existing?.visibleIngredients()?.joinToString("\n") { it.originalText }.orEmpty()) }
     var steps by remember(existing?.id) { mutableStateOf(existing?.steps?.joinToString("\n").orEmpty()) }
     var categories by remember(existing?.id) { mutableStateOf(existing?.categories?.joinToString(", ").orEmpty()) }
     var notes by remember(existing?.id) { mutableStateOf(existing?.notes.orEmpty()) }
@@ -275,7 +304,8 @@ fun EditRecipeScreen(existing: Recipe?, onBack: () -> Unit, onSave: (Recipe) -> 
                         steps = steps.lines().filter { it.isNotBlank() }.map { it.trim().removePrefix("- ") },
                         categories = categories.split(',').map { it.trim() }.filter { it.isNotBlank() }.toSet(),
                         notes = notes.trim(), isFavorite = existing?.isFavorite ?: false,
-                        isUserRecipe = existing?.isUserRecipe ?: true, createdAt = existing?.createdAt ?: System.currentTimeMillis()
+                        isUserRecipe = existing == null || existing.isUserRecipe || title.trim() != existing.title,
+                        createdAt = existing?.createdAt ?: System.currentTimeMillis()
                     )
                     onSave(recipe)
                 }) { Text("Save") }

@@ -38,6 +38,26 @@ data class Recipe(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+/** Use an explicit recipe name in a video's description for older saved imports. */
+fun Recipe.displayTitle(): String {
+    if (isUserRecipe || !sourceName.contains("youtube.com")) return title
+    val candidate = Regex("[「『]([^」』]{2,50})[」』]").find(description)?.groupValues?.get(1)?.trim()
+    return candidate?.takeIf { it.isNotBlank() } ?: title
+}
+
+/** Recover labelled ingredients in saved video imports created before the extractor update. */
+fun Recipe.visibleIngredients(): List<Ingredient> {
+    if (ingredients.isNotEmpty() || isUserRecipe || !sourceName.contains("youtube.com")) return ingredients
+    val section = Regex("(?:^|\\s)(?:食材|材料|ingredients)\\s*[:：]?\\s*(.*)", RegexOption.IGNORE_CASE)
+        .find(description)?.groupValues?.get(1) ?: return ingredients
+    val beforeSteps = section.split(Regex("(?:步驟|步骤|做法|instructions|method)\\s*[:：]", RegexOption.IGNORE_CASE), limit = 2)[0]
+    return beforeSteps.split(Regex("\\s*[■▪●•]\\s*"))
+        .map { it.trim(' ', ',', '，', ';', '；') }
+        .filter { it.isNotBlank() && it.length < 160 && !it.startsWith("http") }
+        .take(60)
+        .map(IngredientParser::parse)
+}
+
 fun Recipe.toJson(): JSONObject = JSONObject().apply {
     put("id", id)
     put("title", title)

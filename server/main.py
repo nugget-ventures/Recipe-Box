@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 
-app = FastAPI(title="RecipeBox Secure Extractor", version="0.1.0")
+app = FastAPI(title="RecipeBox Secure Extractor", version="0.1.1")
 
 MAX_HTML_BYTES = 2_500_000
 MAX_REDIRECTS = 5
@@ -178,6 +178,35 @@ def extract_video(node: dict[str, Any], soup: BeautifulSoup, base: str) -> str:
             return url
     return ""
 
+
+def video_recipe_title(description: str) -> str:
+    """Use an explicit recipe name in a video description, never the channel/episode title."""
+    for pattern in (
+        r"(?:食譜|食谱|料理|菜名|食物|recipe)\s*[:：]\s*[「『\"']?([^\n■▪•|【】]{2,60})",
+        r"[「『]([^」』]{2,50})[」』]",
+    ):
+        match = re.search(pattern, description, flags=re.I)
+        if match:
+            name = clean_text(match.group(1), 80).strip(' 「」『』"\'。!！')
+            if name and not re.search(r"^(?:食材|材料|ingredients|步驟|步骤)$", name, re.I):
+                return name
+    return ""
+
+
+def video_ingredients(description: str) -> list[str]:
+    """Extract only clearly labelled ingredient entries from available page text."""
+    match = re.search(r"(?:^|\s|[🛒🥩])(?:食材|材料|ingredients)\s*[:：]?\s*(.*)", description, re.I | re.S)
+    if not match:
+        return []
+    section = re.split(r"(?:步驟|步骤|做法|instructions|method)\s*[:：]", match.group(1), maxsplit=1, flags=re.I)[0]
+    entries = re.split(r"\s*[■▪●•]\s*|\n+", section)
+    out: list[str] = []
+    for entry in entries:
+        item = clean_text(entry, 500).strip(" ,，;；")
+        if item and len(item) < 160 and not item.startswith(("http:", "https:")):
+            out.append(item)
+    return out[:60]
+
 async def fetch_html(start_url: str) -> tuple[str, str]:
     current = await validate_public_url(start_url)
     headers = {
@@ -266,11 +295,14 @@ async def extract(req: ExtractRequest) -> ExtractedRecipe:
     og_desc = soup.find("meta", attrs={"property": "og:description"}) or soup.find("meta", attrs={"name": "description"})
     og_img = soup.find("meta", attrs={"property": "og:image"})
     source_is_video = any(h in host for h in VIDEO_HOST_HINTS)
+    description = clean_text(og_desc.get("content") if og_desc else "", 12_000)
+    recipe_title = video_recipe_title(description) if source_is_video else ""
     return ExtractedRecipe(
-        title=title or "Imported link",
-        description=clean_text(og_desc.get("content") if og_desc else "", 2000),
+        title=recipe_title or ("Recipe from video" if source_is_video else title or "Imported link"),
+        description=description,
         source_name=source_name,
         source_url=final_url,
         video_url=final_url if source_is_video else extract_video({}, soup, final_url),
         image_url=safe_http_url(og_img.get("content") if og_img else "", final_url),
+        ingredients=video_ingredients(description) if source_is_video else [],
     )

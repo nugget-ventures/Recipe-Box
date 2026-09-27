@@ -2,15 +2,15 @@ package com.example.recipebox
 
 object ShareFormatter {
     fun format(recipe: Recipe, multiplier: Double = 1.0): String = buildString {
-        appendLine("🍳 ${recipe.title}")
+        appendLine("🍳 ${recipe.displayTitle()}")
         recipe.servings?.let { appendLine("Serves ${FractionFormatter.format(it * multiplier)}") }
         if (recipe.prepMinutes != null || recipe.cookMinutes != null) {
             appendLine(listOfNotNull(recipe.prepMinutes?.let { "Prep ${it}m" }, recipe.cookMinutes?.let { "Cook ${it}m" }).joinToString(" • "))
         }
         appendLine()
-        if (recipe.ingredients.isNotEmpty()) {
+        if (recipe.visibleIngredients().isNotEmpty()) {
             appendLine("INGREDIENTS")
-            recipe.ingredients.forEach { appendLine("• ${it.scaled(multiplier)}") }
+            recipe.visibleIngredients().forEach { appendLine("• ${it.scaled(multiplier)}") }
             appendLine()
         }
         if (recipe.steps.isNotEmpty()) {
