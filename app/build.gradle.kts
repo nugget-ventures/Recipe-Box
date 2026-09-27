@@ -16,7 +16,7 @@ android {
 
         // Set this to your deployed HTTPS extractor, for example:
         // https://recipes-api.example.com
-        buildConfigField("String", "EXTRACTOR_BASE_URL", "\"\"")
+        buildConfigField("String", "EXTRACTOR_BASE_URL", "\"https://recipe-box-m7j5.onrender.com\"")
     }
 
     buildFeatures {
